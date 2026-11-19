@@ -1,0 +1,23 @@
+import { webdriverio } from '@vitest/browser-webdriverio';
+import { defineConfig } from 'vitest/config';
+
+// eslint-disable-next-line import/no-default-export
+export default defineConfig({
+    test: {
+        bail: 1,
+        browser: {
+            enabled: true,
+            instances: [
+                {
+                    browser: 'firefox',
+                    headless: true,
+                    name: 'Firefox',
+                    provider: webdriverio({ capabilities: { 'moz:firefoxOptions': { prefs: { 'media.autoplay.default': 0 } } } })
+                }
+            ]
+        },
+        dir: 'test/expectation/firefox/current/',
+        include: ['**/*.js'],
+        watch: false
+    }
+});

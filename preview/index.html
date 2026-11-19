@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>碰撞层预听</title>
+</head>
+<body>
+<p id="status">正在预听</p>
+<section>
+<h1>碰撞层</h1>
+<pre id="ladder"></pre>
+<button id="again" type="button">四百节再跑四次</button>
+<pre id="repeat"></pre>
+<canvas id="wave" width="960" height="240"></canvas>
+</section>
+<section>
+<h1>回路</h1>
+<pre id="loops"></pre>
+</section>
+<script src="app.js"></script>
+<script>
+(function () {
+    var api = globalThis.standardizedAudioContext;
+    var OfflineAudioContext = api.OfflineAudioContext;
+
+    function checksum(buffer) {
+        var data = buffer.getChannelData(0);
+        var acc = 0;
+        var peak = 0;
+        var i;
+        var v;
+        for (i = 0; i < data.length; i += 1) {
+            v = data[i];
+            acc += Math.abs(v);
+            if (Math.abs(v) > peak) peak = Math.abs(v);
+        }
+        return { sum: acc, peak: peak, data: data };
+    }
+
+    function ladder(count) {
+        var frames = 2400;
+        var ctx = new OfflineAudioContext({ length: frames, numberOfChannels: 1, sampleRate: 48000 });
+        var nodes = [];
+        var i;
+        var node;
+        var downstream;
+        var connectMs;
+        var t0;
+        var osc;
+        var gain;
+        var t1;
+        for (i = 0; i < count; i += 1) {
+            node = ctx.createBiquadFilter();
+            node.type = 'peaking';
+            node.frequency.value = 180 + (i % 36) * 70;
+            node.Q.value = 0.7;
+            node.gain.value = i % 2 === 0 ? 2 : -2;
+            nodes.push(node);
+        }
+        t0 = performance.now();
+        downstream = ctx.destination;
+        for (i = 0; i < nodes.length; i += 1) {
+            nodes[i].connect(downstream);
+            downstream = nodes[i];
+        }
+        connectMs = performance.now() - t0;
+        osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.value = 96;
+        gain = ctx.createGain();
+        gain.gain.setValueAtTime(0.2, 0);
+        gain.gain.linearRampToValueAtTime(0.05, frames / 48000);
+        osc.connect(gain);
+        gain.connect(nodes[nodes.length - 1]);
+        osc.start(0);
+        t1 = performance.now();
+        return ctx.startRendering().then(function (buffer) {
+            var check = checksum(buffer);
+            return {
+                count: count,
+                connectMs: connectMs,
+                renderMs: performance.now() - t1,
+                sum: check.sum,
+                peak: check.peak,
+                data: check.data
+            };
+        });
+    }
+
+    function feedback(withDelay) {
+        var frames = 4800;
+        var ctx = new OfflineAudioContext({ length: frames, numberOfChannels: 1, sampleRate: 48000 });
+        var src = ctx.createOscillator();
+        var gain = ctx.createGain();
+        var loop = ctx.createGain();
+        var delay;
+        src.frequency.value = 220;
+        gain.gain.value = 0.2;
+        loop.gain.value = 0.5;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        gain.connect(loop);
+        if (withDelay) {
+            delay = ctx.createDelay(0.05);
+            delay.delayTime.value = 0.01;
+            loop.connect(delay);
+            delay.connect(gain);
+        } else {
+            loop.connect(gain);
+        }
+        src.start(0);
+        src.stop(0.02);
+        return ctx.startRendering().then(function (buffer) {
+            var check = checksum(buffer);
+            return { withDelay: withDelay, sum: check.sum, peak: check.peak };
+        });
+    }
+
+    function line(item) {
+        return item.count + ' 节  接线 ' + item.connectMs.toFixed(1) + ' 毫秒  渲染 ' + item.renderMs.toFixed(1) + ' 毫秒  绝对值和 ' + item.sum.toFixed(4) + '  峰值 ' + item.peak.toFixed(6);
+    }
+
+    function warmup() {
+        var ctx = new OfflineAudioContext({ length: 64, numberOfChannels: 1, sampleRate: 48000 });
+        var osc = ctx.createOscillator();
+        osc.connect(ctx.destination);
+        osc.start(0);
+        return ctx.startRendering();
+    }
+
+    document.getElementById('again').addEventListener('click', function () {
+        var box = document.getElementById('repeat');
+        box.textContent = '正在跑四次';
+        var chain = Promise.resolve();
+        var rows = [];
+        var n;
+        for (n = 0; n < 4; n += 1) {
+            chain = chain.then(function () {
+                return ladder(400).then(function (item) {
+                    rows.push(line(item));
+                    box.textContent = rows.join('\n');
+                });
+            });
+        }
+    });
+
+    warmup().then(function () {
+        return ladder(200);
+    }).then(function (short) {
+        return ladder(400).then(function (long) {
+            document.getElementById('ladder').textContent = line(short) + '\n' + line(long);
+            return long;
+        });
+    }).then(function () {
+        return feedback(true);
+    }).then(function (delayed) {
+        return feedback(false).then(function (plain) {
+            document.getElementById('loops').textContent =
+                '带 10 毫秒延迟  绝对值和 ' + delayed.sum.toFixed(4) + '  峰值 ' + delayed.peak.toFixed(6) + '\n' +
+                '不带延迟  绝对值和 ' + plain.sum.toFixed(4) + '  峰值 ' + plain.peak.toFixed(6);
+            document.getElementById('status').textContent = '预听完成';
+        });
+    }).catch(function (err) {
+        document.getElementById('status').textContent = String(err && err.message ? err.message : err);
+    });
+})();
+</script>
+</body>
+</html>
